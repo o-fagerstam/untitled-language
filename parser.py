@@ -1,12 +1,14 @@
 import lexer, ASTNode
 
-PRIORITIES = {"ASS":0, "INFIX":1, "NAME":2, "NUM":1000, "STR":1000, "COMMA":1001 }
+PRIORITIES = {"ASS":0, "INFIX":1, "NAME":2, "FOR":2, "MOD":1000, "NUM":1000,\
+"STR":1000, "COMMA":1001, "OPEN_CLAUSE":1001, "CLOSE_CLAUSE":1001 }
 
 
 class Parser:
     def __init__(self, debug = False):
         self.trees = []
         self.DEBUG = debug
+        self.current_line = None
 
     def dbg_print(self, msg):
         if self.DEBUG:
@@ -21,23 +23,35 @@ class Parser:
         return self.parse(code)
 
     def parse(self, code):
-        l = lexer.Lexer()
+        def add_newline(line, trees):
+            newtree = self.create_tree(line)
+            trees.append(newtree)
+            line.clear()
+            self.current_line += 1
+        def add_sameline(line, trees):
+            newtree = self.create_tree(line)
+            trees.append(newtree)
+            line.clear()
+
+        l = lexer.Lexer(debug = self.DEBUG)
         symbols = l.lex(code)
         self.dbg_print("symbols: " + str(symbols))
         trees = []
         line = []
-        current_line = 1
+        self.current_line = 1
         for symbol in symbols:
             if symbol[1] == "END":
-                newtree = self.create_tree(line, current_line)
-                trees.append(newtree)
-                line.clear()
-                current_line += 1
+                add_newline(line, trees)
+            elif symbol[1] == "OPEN_CLAUSE":
+                print("GOT HERE")
+                add_sameline(line, trees)
+                line.append(symbol)
+                add_newline(line, trees)
+            elif symbol[1] == "CLOSE_CLAUSE":
+                line.append(symbol)
+                add_newline(line, trees)
             else:
                 line.append(symbol)
-        if symbols[-1][1] != "END":
-            print("Error: Unexpected end of file. (missing ';')")
-            quit()
 
         return trees
 
@@ -83,7 +97,7 @@ class Parser:
     def get_weighted_priority(self, symbol, paren_level):
         return PRIORITIES[symbol[1]] + paren_level * 5
 
-    def create_tree(self, line, current_line):
+    def create_tree(self, line):
         self.dbg_print("create_tree():" + str(line))
         top = None
         paren_level = 0
@@ -127,7 +141,6 @@ class Parser:
                     elif symbol[1] == "CLOSE_PAREN":
                         current_paren_level -= 1
                     if current_paren_level == open_paren_level:
-                        self.dbg_print("GOT HERE")
                         func_start_pos = highest_priority_pos+2
                         func_end_pos = highest_priority_pos+i+1
 
@@ -145,16 +158,69 @@ class Parser:
                 args.append(current_arg)
                 # Then add the arguments as children
                 for arg in args:
-                    top.add_child(self.create_tree(arg, current_line))
+                    top.add_child(self.create_tree(arg))
 
             else:
                 # Else, it is a variable
-                pass
+                # Maybe there are modifiers before
+                modifiers = []
+                if highest_priority_pos != 0:
+                    for i in range(highest_priority_pos-1, -1, -1):
+                        if line[i][1] == "MOD":
+                            modifiers.append(line[i])
+                        else:
+                            break
+                    for i in range(len(modifiers)-1, -1, -1):
+                        top.add_child(self.create_tree([modifiers[i]]))
+
+        elif top.id[1] == "MOD":
+            pass
 
         elif top.id[1] == "INFIX":
-            top.add_child(self.create_tree(self.get_parenthesis_before(line[:highest_priority_pos]), current_line))
-            top.add_child(self.create_tree(self.get_parenthesis_after(line[highest_priority_pos+1:]), current_line))
+            top.add_child(self.create_tree(self.get_parenthesis_before(line[:highest_priority_pos])))
+            top.add_child(self.create_tree(self.get_parenthesis_after(line[highest_priority_pos+1:])))
+
         elif top.id[1] == "ASS":
-            top.add_child(self.create_tree([line[highest_priority_pos-1]], current_line))
-            top.add_child(self.create_tree(line[highest_priority_pos+1:],current_line))
+            top.add_child(self.create_tree(self.get_parenthesis_before(line[:highest_priority_pos])))
+            top.add_child(self.create_tree(line[highest_priority_pos+1:]))
+
+        elif top.id[1] == "OPEN_CLAUSE":
+            pass
+
+        elif top.id[1] == "CLOSE_CLAUSE":
+            pass
+
+        elif top.id[1] == "STR":
+            pass
+
+        elif top.id[1] == "FOR":
+            if highest_priority_pos + 1 >= len(line) or line[highest_priority_pos+1][1] != "OPEN_PAREN":
+                self.line_error_print(self.current_line, "Expected parenthesis after for statement")
+                quit()
+            current_paren_level = 1
+            commas = [highest_priority_pos+1]
+            for i, symbol in enumerate(line[highest_priority_pos+2:]):
+                if symbol[1] == "COMMA" and current_paren_level == 1:
+                    commas.append(i + highest_priority_pos + 2)
+                elif symbol[1] == "OPEN_PAREN":
+                    current_paren_level += 1
+                elif symbol[1] == "CLOSE_PAREN":
+                    current_paren_level -= 1
+                    if current_paren_level == 0:
+                        commas.append(i + highest_priority_pos + 2)
+                        break
+            else:
+                # If no break, we didn't find a closing parenthesis
+                self.line_error_print(self.current_line, "No closing parenthesis on for statement")
+            if len(commas) != 4:
+                self.line_error_print(self.current_line, "For loop expects 3 arguments (<init state>, <break condition>, <increment>)")
+
+            top.add_child(self.create_tree(line[commas[0]+1:commas[1]]))
+            top.add_child(self.create_tree(line[commas[1]+1:commas[2]]))
+            top.add_child(self.create_tree(line[commas[2]+1:commas[3]]))
+
+        else:
+            self.line_error_print(self.current_line, "Parser did not recognize symbol " + str(symbol))
+            quit()
+
         return top
