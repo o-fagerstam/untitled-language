@@ -34,7 +34,6 @@ class Transpiler:
             f.write("#include \"clibraries/objects.h\"\n")
             for line in self.preamble:
                 f.write(line)
-                f.write("\n")
             # Main
             f.write("int main() {\n")
             self.line_depth += 1
@@ -52,11 +51,16 @@ class Transpiler:
         if tree.id[1] == "NAME":
             if tree.children:
                 res = " ".join(self.transpile_modifiers(tree.children)) + " " + tree.id[0]
+                for child in tree.children:
+                    if child.id[1] in ("NAME", "FUNC"):
+                        self.dbg_print("Found dot child " + str(child.id))
+                        res += "__" + self.transpile_recursive(child)
             else:
                 res = tree.id[0]
         elif tree.id[1] == "NUM":
             res = tree.id[0]
         elif tree.id[1] == "FUNC":
+            self.dbg_print("Transpiling function " + tree.id[0])
             # If function in library
                 # Add library call
             self.dbg_print(f"Function " + tree.id[0] + " in core.funcs: " + str(tree.id[0] in core.funcs))
@@ -64,8 +68,7 @@ class Transpiler:
                 res = core.funcs[tree.id[0]](self.transpile_arguments(tree.children))
             else:
                 # Make normal call
-                res = " ".join(self.transpile_modifiers(tree.children)) + " " +  tree.id[0] + "(" +\
-                    ", ".join(self.transpile_arguments(tree.children)) + ")"
+                res = tree.id[0] + "(" + ", ".join(self.transpile_arguments(tree.children)) + ")"
         elif tree.id[1] == "CLS":
             res = " ".join(self.transpile_modifiers(tree.children)) + " " + tree.id[0]
             line_end = ""
@@ -117,10 +120,10 @@ class Transpiler:
                 attributes.append(child)
                 self.dbg_print("Found attribute:")
                 child.print_tree()
-                self.preamble.append(f"struct obj__{tree.id[0]}" + "{")
+                self.preamble.append(f"struct obj__{tree.id[0]}" + "{\n")
                 for attribute in attributes:
-                    self.preamble.append(self.transpile_attribute(child) + ";")
-                self.preamble.append("};")
+                    self.preamble.append(self.transpile_attribute(child) + ";\n")
+                self.preamble.append("};\n")
         for child in tree.clause_trees:
             if child.id[1] == "FUNCDEF":
                 # Functions need to be written into the preamble

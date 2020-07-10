@@ -2,7 +2,7 @@
 import lexer, ASTNode
 
 PRIORITIES = {"ASS":0, "INFIX":1, "NAME":2, "FOR":2, "MOD":1000, "CLS":1000, "DEF":1000, "NUM":1000,\
-"STR":1000, "COMMA":1001, "OPEN_CLAUSE":1001, "CLOSE_CLAUSE":1001 }
+"STR":1000, "COMMA":1001, "OPEN_CLAUSE":1001, "CLOSE_CLAUSE":1001, "DOT":1001 }
 
 
 class Parser:
@@ -194,6 +194,20 @@ class Parser:
                         highest_priority_pos = pos
                         highest_priority_value = self.get_weighted_priority(symbol, paren_level)
 
+        dot_search_end = False
+        last_was_dot = False
+        while line[highest_priority_pos][1] in ("NAME", "DOT") and highest_priority_pos > 0 and (not dot_search_end):
+            self.dbg_print("Looking at " + str(line[highest_priority_pos-1]))
+            if line[highest_priority_pos-1][1] == "DOT":
+                last_was_dot = True
+                highest_priority_pos -= 1
+            else:
+                if last_was_dot:
+                    highest_priority_pos -= 1
+                else:
+                    dot_search_end = True
+                last_was_dot = False
+
         # Recursively build tree
         self.dbg_print("create_tree(): Highest priority is " + str(line[highest_priority_pos]) + " pos " + str(highest_priority_pos))
         top = ASTNode.Node(line[highest_priority_pos])
@@ -217,11 +231,33 @@ class Parser:
                 for arg in self.make_args(line[highest_priority_pos+1:]):
                     top.add_child(self.create_tree(arg))
 
-            elif highest_priority_pos+1 <= len(line)-1 and line[highest_priority_pos+1]:
+            elif highest_priority_pos+1 <= len(line)-1 and line[highest_priority_pos+1][1] == "OPEN_PAREN":
                 # Else if there is an opening parenthesis after, this is a function.
                 top.id = (top.id[0], "FUNC")
                 for arg in self.make_args(line[highest_priority_pos+1:]):
                     top.add_child(self.create_tree(arg))
+
+            elif highest_priority_pos+1 <= len(line)-1 and line[highest_priority_pos+1][1] == "DOT":
+                # Else if there is a dot following, this is an object/class attribute path
+                self.dbg_print("GOT HERE ")
+                self.dbg_print("Dot searching children from " + str(line[highest_priority_pos]))
+                self.dbg_print("In line " + str(line))
+                end_pos = highest_priority_pos + 2
+                last_was_dot = True
+                current_paren_level = 0
+                while end_pos < len(line) and (last_was_dot or current_paren_level != 0 or line[end_pos][1] in ("OPEN_PAREN", "DOT")):
+                    self.dbg_print("Looking at" + str(line[end_pos]))
+                    if line[end_pos][1] == "OPEN_PAREN":
+                        current_paren_level += 1
+                    elif line[end_pos][1] == "CLOSE_PAREN":
+                        current_paren_level -= 1
+                    if line[end_pos][1] == "DOT":
+                        last_was_dot = True
+                    else:
+                        last_was_dot = False
+                    end_pos += 1
+                top.add_child(self.create_tree(line[highest_priority_pos+2:end_pos+1]))
+
 
             else:
                 # Else, it is a variable
