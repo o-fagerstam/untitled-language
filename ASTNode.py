@@ -16,3 +16,18 @@ class Node:
         print("\t"*depth + str(self.id))
         for child in self.children:
             child.print_tree_recursive(depth+1)
+
+class ClauseNode(Node):
+    def __init__(self, id):
+        super().__init__(id)
+        self.clause_trees = []
+
+    def add_clause_tree(self, new_tree):
+        self.clause_trees.append(new_tree)
+
+    def print_tree(self):
+        super().print_tree()
+        print("Clause tree children: {{{")
+        for tree in self.clause_trees:
+            tree.print_tree()
+        print("}}}")

@@ -1,6 +1,7 @@
+
 import lexer, ASTNode
 
-PRIORITIES = {"ASS":0, "INFIX":1, "NAME":2, "FOR":2, "MOD":1000, "NUM":1000,\
+PRIORITIES = {"ASS":0, "INFIX":1, "NAME":2, "FOR":2, "MOD":1000, "CLS":1000, "DEF":1000, "NUM":1000,\
 "STR":1000, "COMMA":1001, "OPEN_CLAUSE":1001, "CLOSE_CLAUSE":1001 }
 
 
@@ -20,38 +21,77 @@ class Parser:
     def parse_file(self, filename):
         with open(filename, "r") as f:
             code = f.read()
-        return self.parse(code)
+        return self.parse_code(code)
 
-    def parse(self, code):
+    def parse_code(self, code):
+        l = lexer.Lexer(debug = self.DEBUG)
+        symbols = l.lex(code)
+        self.dbg_print("symbols: " + str(symbols))
+        trees = self.parse_symbols(symbols)
+        return trees
+
+    def parse_symbols(self, symbols):
         def add_newline(line, trees):
             newtree = self.create_tree(line)
             trees.append(newtree)
+            if self.DEBUG:
+                newtree.print_tree()
             line.clear()
             self.current_line += 1
         def add_sameline(line, trees):
             newtree = self.create_tree(line)
             trees.append(newtree)
+            if self.DEBUG:
+                newtree.print_tree()
+            line.clear()
+        def add_clausetree(newtree, trees):
+            trees.append(newtree)
+            if self.DEBUG:
+                newtree.print_tree()
             line.clear()
 
-        l = lexer.Lexer(debug = self.DEBUG)
-        symbols = l.lex(code)
-        self.dbg_print("symbols: " + str(symbols))
         trees = []
         line = []
         self.current_line = 1
-        for symbol in symbols:
+        i = 0
+        while i < len(symbols):
+            symbol = symbols[i]
             if symbol[1] == "END":
                 add_newline(line, trees)
             elif symbol[1] == "OPEN_CLAUSE":
-                print("GOT HERE")
-                add_sameline(line, trees)
+                if line:
+                    add_sameline(line, trees)
                 line.append(symbol)
                 add_newline(line, trees)
             elif symbol[1] == "CLOSE_CLAUSE":
+                if line:
+                    self.line_error_print(self.current_line, "Expected ; at end of line")
+                    quit()
                 line.append(symbol)
                 add_newline(line, trees)
+            elif symbol[1] in ("CLS", "DEF"):
+                self.dbg_print("Clause symbol is " + symbol[1])
+                clause_open = False
+                clause_depth = 0
+                while not (clause_open and clause_depth == 0):
+                    i += 1
+                    search_symbol = symbols[i]
+                    line.append(search_symbol)
+                    if search_symbol[1] == "OPEN_CLAUSE":
+                        clause_open = True
+                        clause_depth += 1
+                    elif search_symbol[1] == "CLOSE_CLAUSE":
+                        clause_depth -= 1
+                self.dbg_print("Clause tree line is: " + str(line))
+                if symbol[1] == "CLS":
+                    class_tree = self.create_clause_tree(line, "CLSDEF")
+                    add_clausetree(class_tree, trees)
+                elif symbol[1] == "DEF":
+                    func_tree = self.create_clause_tree(line, "FUNCDEF")
+                    add_clausetree(func_tree, trees)
             else:
                 line.append(symbol)
+            i += 1
 
         return trees
 
@@ -97,6 +137,38 @@ class Parser:
     def get_weighted_priority(self, symbol, paren_level):
         return PRIORITIES[symbol[1]] + paren_level * 5
 
+    def make_args(self, line):
+        self.dbg_print("make_args():" + str(line))
+        paren_level = 0
+
+        for i, symbol in enumerate(line):
+            if symbol[1] == "OPEN_PAREN":
+                paren_level += 1
+            elif symbol[1] == "CLOSE_PAREN":
+                paren_level -= 1
+            if paren_level == 0 :
+                func_end_pos = i
+                break
+
+        if i == 1:
+            # If i==1 we have an empty parenthesis ()
+            return []
+
+        # Then we make a list of arguments
+        args = []
+        current_arg = []
+        arg_start = 0
+        self.dbg_print("make_args(): Finding args in " + str(line[1:func_end_pos]))
+        for i, symbol in enumerate(line[1:func_end_pos]):
+            if symbol[1] == "COMMA":
+                args.append(current_arg)
+                current_arg = []
+            else:
+                current_arg.append(symbol)
+        args.append(current_arg)
+        return args
+
+
     def create_tree(self, line):
         self.dbg_print("create_tree():" + str(line))
         top = None
@@ -128,50 +200,32 @@ class Parser:
         if top.id[1] == "NUM":
             pass
         elif top.id[1] == "NAME":
-            if highest_priority_pos+1 <= len(line)-1 and line[highest_priority_pos+1]:
-                # If there is an opening parenthesis after, this is a function.
-                top.id = (top.id[0], "FUNC")
-                # First we find the end of the function parenthesis
-                open_paren_level = paren_level
-                current_paren_level = open_paren_level
-                self.dbg_print("Paren line is: " + str(line[highest_priority_pos+1:]))
-                for i, symbol in enumerate(line[highest_priority_pos+1:]):
-                    if symbol[1] == "OPEN_PAREN":
-                        current_paren_level += 1
-                    elif symbol[1] == "CLOSE_PAREN":
-                        current_paren_level -= 1
-                    if current_paren_level == open_paren_level:
-                        func_start_pos = highest_priority_pos+2
-                        func_end_pos = highest_priority_pos+i+1
-
-                # Then we make a list of arguments
-                args = []
-                current_arg = []
-                arg_start = 0
-                self.dbg_print("create_tree(): Finding args in " + str(line[func_start_pos:func_end_pos]))
-                for i, symbol in enumerate(line[func_start_pos:func_end_pos]):
-                    if symbol[1] == "COMMA":
-                        args.append(current_arg)
-                        current_arg = []
+            # Check for modifiers first
+            modifiers = []
+            if highest_priority_pos != 0:
+                for i in range(highest_priority_pos-1, -1, -1):
+                    if line[i][1] == "MOD":
+                        modifiers.append(line[i])
                     else:
-                        current_arg.append(symbol)
-                args.append(current_arg)
-                # Then add the arguments as children
-                for arg in args:
+                        break
+                for i in range(len(modifiers)-1, -1, -1):
+                    top.add_child(self.create_tree([modifiers[i]]))
+
+            if highest_priority_pos > 0 and "CLS" in (x[1] for x in line[:highest_priority_pos]):
+                # If there is a CLS label before, this is a class
+                top.id = (top.id[0], "CLS")
+                for arg in self.make_args(line[highest_priority_pos+1:]):
+                    top.add_child(self.create_tree(arg))
+
+            elif highest_priority_pos+1 <= len(line)-1 and line[highest_priority_pos+1]:
+                # Else if there is an opening parenthesis after, this is a function.
+                top.id = (top.id[0], "FUNC")
+                for arg in self.make_args(line[highest_priority_pos+1:]):
                     top.add_child(self.create_tree(arg))
 
             else:
                 # Else, it is a variable
-                # Maybe there are modifiers before
-                modifiers = []
-                if highest_priority_pos != 0:
-                    for i in range(highest_priority_pos-1, -1, -1):
-                        if line[i][1] == "MOD":
-                            modifiers.append(line[i])
-                        else:
-                            break
-                    for i in range(len(modifiers)-1, -1, -1):
-                        top.add_child(self.create_tree([modifiers[i]]))
+                pass
 
         elif top.id[1] == "MOD":
             pass
@@ -223,4 +277,27 @@ class Parser:
             self.line_error_print(self.current_line, "Parser did not recognize symbol " + str(symbol))
             quit()
 
+        return top
+
+    def create_clause_tree(self, line, type):
+        for i, symbol in enumerate(line):
+            if symbol[1] == "NAME":
+                self.dbg_print("Clause tree top is " + str(symbol))
+                top = ASTNode.ClauseNode((symbol[0], type))
+                name_def_pos = i
+                break
+        for symbol in line[:name_def_pos]:
+            top.children.append(self.create_tree([symbol]))
+        offset = 1
+        if line[name_def_pos + offset][1] == "OPEN_PAREN":
+            paren_depth = 1
+            while paren_depth != 0:
+                offset += 1
+                if line[name_def_pos + offset][1] == "OPEN_PAREN":
+                    paren_depth += 1
+                elif line[name_def_pos + offset][1] == "CLOSE_PAREN":
+                    paren_depth -= 1
+            args = self.make_args(line[name_def_pos+1:name_def_pos+offset+1])
+            top.children += [self.create_tree(arg) for arg in args]
+        top.clause_trees = self.parse_symbols(line[name_def_pos+offset+1:])
         return top
