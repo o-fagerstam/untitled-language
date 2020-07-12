@@ -87,12 +87,14 @@ class Transpiler:
                 if parent != self:
                     append(self.namespace)
                 parent_class = self.get_class(path[0], namespaces)
+                # Check if we are calling a class or an instance of a class
                 if parent_class.name == path[0]:
                     object_name = ""
                 else:
                     object_name = path[0]
                     path[0] = parent_class.name
                 self.dbg_print("Found parent class " + parent_class.name)
+                # This search isn't necessary, but we keep it to make sure the function exists
                 fn = self.namespace_search(path, namespaces)
                 self.dbg_print("Namespace search found function: " + fn.name)
                 res = "__".join(path) + "(" + ", ".join([object_name] + self.transpile_arguments(tree.children)) + ")"
@@ -143,18 +145,17 @@ class Transpiler:
     def transpile_class(self, tree):
         new_class = intermediates.TranspiledClass(tree.id[0])
         has_make = False
+        self.preamble.append(f"struct obj__{tree.id[0]}" + "{\n")
         for child in tree.clause_trees:
             if child.id[1] == "NAME":
                 # Attributes are saved for later so we can check against them when manipulating the object.
-                # TODO: Add attributes to preamble as a struct
                 new_class.namespace[child.id[0]] = child
                 self.dbg_print("Found attribute:")
                 child.print_tree()
-                self.preamble.append(f"struct obj__{tree.id[0]}" + "{\n")
-                self.dbg_print(str(new_class.namespace.items()))
-                for attribute in new_class.namespace.values():
-                    self.preamble.append(self.transpile_attribute(child) + ";\n")
-                self.preamble.append("};\n")
+        self.dbg_print([str(x.id) for x in new_class.namespace.values()])
+        for attribute in new_class.namespace.values():
+            self.preamble.append(self.transpile_attribute(attribute) + ";\n")
+        self.preamble.append("};\n")
         for child in tree.clause_trees:
             if child.id[1] == "FUNCDEF":
                 if child.id[0] != "make":
@@ -177,6 +178,9 @@ class Transpiler:
         '''Transpiles a single attribute declaration for a class defintion.
         tree = The attribute tree that is to be transpiled.
         return value: String of transpiled attribute.'''
+        self.dbg_print("Transpiling attributes of tree: ")
+        if self.debug:
+            tree.print_tree()
         res = []
         if tree.id[1] != "NAME":
             self.error_print(f"transpile_attribute(): Unknown symbol {tree.id}")
