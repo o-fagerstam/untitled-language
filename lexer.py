@@ -11,8 +11,8 @@ class Lexer:
     def lex(self, code):
         symbols = {";":"END", "(":"OPEN_PAREN", ")":"CLOSE_PAREN", "+":"INFIX", "=":"ASS", "-":"INFIX", "==":"INFIX",\
         "<":"INFIX", ">":"INFIX", ",":"COMMA", "for":"FOR", "{":"OPEN_CLAUSE", "}":"CLOSE_CLAUSE", "class":"CLS",\
-        "func":"DEF", "void":"MOD", "int":"MOD", ".":"DOT"}
-        pattern = "[\w][\w\d]*|[0-9]+|[+-=,;]{1,2}|\(|\)|\"[^\"]*\"|\'[^\']*\'|{|}|\."
+        "func":"DEF", "void":"MOD", "int":"MOD", "return":"RET"}
+        pattern = "[\w][\w\d]*(?:\.[\w][\w\d]*)*|[0-9]+|[+-=,;]{1,2}|\(|\)|\"[^\"]*\"|\'[^\']*\'|{|}"
         res = []
         for match in re.finditer(pattern, code):
             token = match.group(0)

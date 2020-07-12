@@ -1,9 +1,13 @@
-class TranspiledClass:
-    def __init__(self, attributes, functions):
-        self.attributes = attributes
-        self.functions = functions
+class Transpilable:
+    def __init__(self, name):
+        self.name = name
+        self.namespace = {}
 
-class TranspiledFunc:
-    def __init__(self, arguments, return_type):
-        self.arguments = arguments
+class TranspiledClass(Transpilable):
+    pass
+
+class TranspiledFunc(Transpilable):
+    def __init__(self, name, args, return_type):
+        super().__init__(name)
+        self.args = args
         self.return_type = return_type
