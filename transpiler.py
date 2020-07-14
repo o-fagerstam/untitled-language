@@ -105,7 +105,13 @@ class Transpiler:
                 # This search isn't necessary, but we keep it to make sure the function exists
                 fn = self.namespace_search(path, namespaces)
                 self.dbg_print("Namespace search found function: " + fn.name)
-                res = "__".join(path) + "(" + ", ".join([object_name] + self.transpile_arguments(tree.children)) + ")"
+                if fn.name == "make":
+                    # Make is a static function, so it doesn't take a "this" object.
+                    # This code can run for all static functions when they are implemented.
+                    res = "__".join(path) + "(" + ", ".join(self.transpile_arguments(tree.children)) + ")"
+                else:
+                    # For non-static functions
+                    res = "__".join(path) + "(" + ", ".join([object_name] + self.transpile_arguments(tree.children)) + ")"
 
         elif tree.id[1] == "CLS":
             res = " ".join(self.transpile_modifiers(tree.children)) + " " + tree.id[0]
@@ -271,10 +277,10 @@ class Transpiler:
         clause_tree_len = len(tree.clause_trees)
         for i, c_tree in enumerate(tree.clause_trees):
             if i == 1:
-                lines.append(f"struct obj__{parent_name}* __new__ = malloc(sizeof(struct obj__{parent_name}));\n")
-                lines.append(f"__CORE__malloc_null_chk(__new__, \"{tree.id[0]}\");\n")
+                lines.append(f"struct obj__{parent_name}* this = malloc(sizeof(struct obj__{parent_name}));\n")
+                lines.append(f"__CORE__malloc_null_chk(this, \"{tree.id[0]}\");\n")
             if i == clause_tree_len-1:
-                lines.append(f"return __new__;\n")
+                lines.append(f"return this;\n")
             lines.append(self.transpile_recursive(self, c_tree, root = True))
         return lines
 
