@@ -1,7 +1,7 @@
 
 import lexer, ASTNode
 
-PRIORITIES = {"ASS":0, "INFIX":1, "NAME":2, "FOR":2, "MOD":1000, "CLS":1000, "DEF":1000, "NUM":1000,\
+PRIORITIES = {"ASS":0, "INFIX":1, "NAME":2, "FOR":2, "IF":2, "MOD":1000, "CLS":1000, "DEF":1000, "NUM":1000,\
 "STR":1000, "COMMA":1001, "OPEN_CLAUSE":1001, "CLOSE_CLAUSE":1001, "DOT":1001, "RET":1002 }
 
 
@@ -69,7 +69,7 @@ class Parser:
                     quit()
                 line.append(symbol)
                 add_newline(line, trees)
-            elif symbol[1] in ("CLS", "DEF"):
+            elif symbol[1] in ("CLS", "DEF", "FOR", "IF"):
                 self.dbg_print("Clause symbol is " + symbol[1])
                 clause_open = False
                 clause_depth = 0
@@ -84,10 +84,13 @@ class Parser:
                         clause_depth -= 1
                 self.dbg_print("Clause tree line is: " + str(line))
                 if symbol[1] == "CLS":
-                    class_tree = self.create_clause_tree(line, "CLSDEF")
+                    class_tree = self.create_def_tree(line, "CLSDEF")
                     add_clausetree(class_tree, trees)
                 elif symbol[1] == "DEF":
-                    func_tree = self.create_clause_tree(line, "FUNCDEF")
+                    func_tree = self.create_def_tree(line, "FUNCDEF")
+                    add_clausetree(func_tree, trees)
+                elif symbol[1] in ("FOR", "IF"):
+                    func_tree = self.create_clause_tree(line, symbol)
                     add_clausetree(func_tree, trees)
             else:
                 line.append(symbol)
@@ -285,6 +288,26 @@ class Parser:
         return top
 
     def create_clause_tree(self, line, type):
+        start_pos = 0
+        offset = 0
+        if line[start_pos + offset][1] != "OPEN_PAREN":
+            self.line_error_print(self.current_line, f"{type} needs arguments")
+        else:
+            top = ASTNode.ClauseNode(type)
+            paren_depth = 1
+            while paren_depth > 0:
+                offset += 1
+                if line[start_pos+offset][1] == "OPEN_PAREN":
+                    paren_depth += 1
+                elif line[start_pos+offset][1] == "CLOSE_PAREN":
+                    paren_depth -= 1
+            print("Arg line is:" + str(line[start_pos+1:start_pos+offset+1]))
+            args = self.make_args(line[start_pos:start_pos+offset+1])
+            top.children += [self.create_tree(arg) for arg in args]
+        top.clause_trees = self.parse_symbols(line[start_pos+offset+1:])
+        return top
+
+    def create_def_tree(self, line, type):
         for i, symbol in enumerate(line):
             if symbol[1] == "NAME":
                 self.dbg_print("Clause tree top is " + str(symbol))

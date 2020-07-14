@@ -1,6 +1,8 @@
 import ASTNode, intermediates
 from libraries import core
 
+BASIC_TYPES = set("int", )
+
 class Transpiler:
     def __init__(self, debug = False):
         self.debug = debug
@@ -22,7 +24,7 @@ class Transpiler:
             if self.debug:
                 print("Transpiling tree:")
                 tree.print_tree()
-            if isinstance(tree, ASTNode.ClauseNode) and tree.id[1] == "CLSDEF":
+            if isinstance(tree, ASTNode.ClauseNode):
                 if tree.id[1] == "CLSDEF":
                     self.dbg_print("transpile(): This is a class definition node")
                     self.namespace[tree.id[0]] = self.transpile_class(tree)
@@ -69,7 +71,13 @@ class Transpiler:
                 self.dbg_print("Modifiers were" + str(self.get_modifiers(tree)))
                 res = modifiers + " " + tree.id[0]
             else:
-                res = self.transpile_name_path(tree)
+                # This is a reference to a declared variable
+                self.dbg_print(f"Transpiling declared variable {tree.id[0]}")
+                path = tree.id[0].split(".")
+                namespaces = [parent.namespace,]
+                if parent != self:
+                    namespaces.append(self.namespace)
+                res = tree.id[0].replace(".", "->")
         elif tree.id[1] == "NUM":
             res = tree.id[0]
         elif tree.id[1] == "FUNC":
@@ -85,7 +93,7 @@ class Transpiler:
                 namespaces = []
                 namespaces.append(parent.namespace)
                 if parent != self:
-                    append(self.namespace)
+                    namespaces.append(self.namespace)
                 parent_class = self.get_class(path[0], namespaces)
                 # Check if we are calling a class or an instance of a class
                 if parent_class.name == path[0]:
@@ -109,8 +117,9 @@ class Transpiler:
             res = self.transpile_recursive(self, tree.children[0]) + " = " + self.transpile_recursive(self, tree.children[1])
         elif tree.id[1] == "STR":
             res = tree.id[0]
-        elif tree.id[1] == "FOR":
-            res = "for(" + "; ".join(self.transpile_arguments(tree.children)) + ") "
+        elif tree.id[1] in ("FOR", "IF"):
+            lines = self.transpile_clause_tree(tree)
+            res = "".join(lines)
             line_end = ""
         elif tree.id[1] == "OPEN_CLAUSE":
             self.line_depth += 1
@@ -171,8 +180,9 @@ class Transpiler:
             elif child.id[1] in ("OPEN_CLAUSE", "CLOSE_CLAUSE", "NAME"):
                 pass
             else:
-                self.error_print(f"transpile_class(): Unexpected tree {str(child.id)} in class {tree.id[0]}")
+                raise Exception(f"transpile_class(): Unexpected tree {str(child.id)} in class {tree.id[0]}")
         return new_class
+
 
     def transpile_attribute(self, tree):
         '''Transpiles a single attribute declaration for a class defintion.
@@ -183,18 +193,18 @@ class Transpiler:
             tree.print_tree()
         res = []
         if tree.id[1] != "NAME":
-            self.error_print(f"transpile_attribute(): Unknown symbol {tree.id}")
+            raise Exception(f"Unknown symbol {tree.id}")
         else:
             for child in tree.children:
                 if child.id[1] not in ("MOD", "NAME"):
-                    self.error_print(f"transpile_attribute(): Argument {tree.id} has non-modifier child")
+                    raise Exception(f"transpile_attribute(): Argument {tree.id} has non-modifier child")
 
                 if child.id[1] == "NAME":
                     res.append(f"struct obj__{child.id[0]}*")
                 elif child.id[0] in ("int"):
                     res.append(child.id[0])
                 else:
-                    self.error_print(f"transpile_attribute(): Argument {tree.id} has unknown modifier {child.id[0]}")
+                    raise Exception(f"transpile_attribute(): Argument {tree.id} has unknown modifier {child.id[0]}")
 
         res.append(tree.id[0])
 
@@ -214,9 +224,9 @@ class Transpiler:
                 if not make_type:
                     return_value = child
                 else:
-                    self.error_print("make_func_object(): make() does not take modifiers!")
+                    raise Exception("make_func_object(): make() does not take modifiers!")
             else:
-                self.error_print(f"make_func_object(): Unknown argument {str(child.id)}")
+                raise Exception(f"make_func_object(): Unknown argument {str(child.id)}")
         for c_tree in tree.clause_trees:
             if c_tree.id[1] == "NAME":
                 namespace[c_tree.id[0]] = c_tree
@@ -234,6 +244,18 @@ class Transpiler:
         attributes = [self.transpile_attribute(child) for child in tree.children if child.id[1] != "MOD"]
         modifiers = [child.id[0] for child in tree.children if child.id[1] == "MOD"]
         lines.append(f"{' '.join(modifiers)} {parent_name}__{tree.id[0]}({', '.join([f'struct obj__{parent_name}* __SELF__'] + attributes)})")
+        for c_tree in tree.clause_trees:
+            lines.append(self.transpile_recursive(self, c_tree, root = True))
+        return lines
+
+    def transpile_clause_tree(self, tree):
+        '''Transpiles a clause tree (for example an if or for loop) into C code.
+        tree: The clause tree to be transpiled.
+        return value: a list of lines to transpile.'''
+        self.dbg_print(f"transpile_clause_tree(): Transpiling {tree.id[0]}")
+        arguments = self.transpile_arguments(tree.children)
+        lines = []
+        lines.append(f"{tree.id[0]}({'; '.join(arguments)})")
         for c_tree in tree.clause_trees:
             lines.append(self.transpile_recursive(self, c_tree, root = True))
         return lines
@@ -256,22 +278,21 @@ class Transpiler:
             lines.append(self.transpile_recursive(self, c_tree, root = True))
         return lines
 
-    def transpile_name_path(self, tree):
-        '''Turns a dot-separated name path into an underscore-separated path.'''
-        return tree.id[0].replace(".", "__")
-
     def namespace_search(self, path, namespaces):
-        self.dbg_print("Searching for " + path[0] + " in " + str(namespaces))
+        self.dbg_print("Searching for '" + path[0] + "' in " + str(namespaces))
+        self.dbg_print("Path length is " + str(len(path)))
+        res = None
         if len(path) == 1:
             for ns in namespaces:
                 if path[0] in ns:
-                    return ns[path[0]]
-            self.error_print(f"{path[0]} not in namespace")
+                    res = ns[path[0]]
         else:
             for ns in namespaces:
                 if path[0] in ns:
-                    return self.namespace_search(path[1:], [ns[path[0]].namespace])
-            self.error_print(f"{path[0]} not in namespace")
+                    res = self.namespace_search(path[1:], [ns[path[0]].namespace])
+        if res == None:
+            raise Exception(f"{path[0]} not in namespace")
+        return res
 
     def get_class(self, name, namespaces):
         self.dbg_print("Getting class of name " + name)
