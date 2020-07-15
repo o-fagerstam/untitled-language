@@ -94,24 +94,34 @@ class Transpiler:
                 namespaces.append(parent.namespace)
                 if parent != self:
                     namespaces.append(self.namespace)
-                parent_class = self.get_class(path[0], namespaces)
-                # Check if we are calling a class or an instance of a class
+                for i in range(0,len(path)-1):
+                    parent_class = self.get_class(path[i], namespaces)
+                    if i < len(path)-2:
+                        namespaces = [parent_class.namespace,]
+                # Check if we are calling a static or instance method
                 if parent_class.name == path[0]:
+                    # If static, no object name
                     object_name = ""
                 else:
-                    object_name = path[0]
-                    path[0] = parent_class.name
+                    # Else, everything exept the last part of path (which is a function call)
+                    object_name = "->".join(path[:-1])
                 self.dbg_print("Found parent class " + parent_class.name)
                 # This search isn't necessary, but we keep it to make sure the function exists
-                fn = self.namespace_search(path, namespaces)
+                fn = self.namespace_search([path[-1]], [parent_class.namespace,])
                 self.dbg_print("Namespace search found function: " + fn.name)
+                # Construct transpiled string
+                parts = []
+                parts.append(parent_class.name + "__")
+                parts.append(fn.name + "(")
                 if fn.name == "make":
                     # Make is a static function, so it doesn't take a "this" object.
                     # This code can run for all static functions when they are implemented.
-                    res = "__".join(path) + "(" + ", ".join(self.transpile_arguments(tree.children)) + ")"
+                    parts.append(", ".join(self.transpile_arguments(tree.children)))
                 else:
-                    # For non-static functions
-                    res = "__".join(path) + "(" + ", ".join([object_name] + self.transpile_arguments(tree.children)) + ")"
+                    parts.append(", ".join([object_name] + self.transpile_arguments(tree.children)))
+                parts.append(")")
+                res = "".join(parts)
+                del parts
 
         elif tree.id[1] == "CLS":
             res = " ".join(self.transpile_modifiers(tree.children)) + " " + tree.id[0]
@@ -249,7 +259,7 @@ class Transpiler:
         lines = []
         attributes = [self.transpile_attribute(child) for child in tree.children if child.id[1] != "MOD"]
         modifiers = [child.id[0] for child in tree.children if child.id[1] == "MOD"]
-        lines.append(f"{' '.join(modifiers)} {parent_name}__{tree.id[0]}({', '.join([f'struct obj__{parent_name}* __SELF__'] + attributes)})")
+        lines.append(f"{' '.join(modifiers)} {parent_name}__{tree.id[0]}({', '.join([f'struct obj__{parent_name}* this'] + attributes)})")
         for c_tree in tree.clause_trees:
             lines.append(self.transpile_recursive(self, c_tree, root = True))
         return lines
@@ -301,7 +311,7 @@ class Transpiler:
         return res
 
     def get_class(self, name, namespaces):
-        self.dbg_print("Getting class of name " + name)
+        self.dbg_print("Getting class of name " + name + " in namespace " + str(namespaces))
         for ns in namespaces:
             if name in ns:
                 if isinstance(ns[name], ASTNode.Node):
